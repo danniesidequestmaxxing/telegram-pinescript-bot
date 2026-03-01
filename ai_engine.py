@@ -62,9 +62,12 @@ async def _fetch_market_data(symbol: str, timeframe: str = "4h") -> str:
 
 SYSTEM_PROMPT = """You are an expert quantitative trading analyst and PineScript v6 developer.
 
-When suggesting trades, be CONCISE. This is sent to Telegram — no walls of text.
-Always include: direction (LONG/SHORT), entry, TP1/TP2/TP3, SL, and risk-to-reward.
-Base all levels on the real-time price data provided. Be specific, not generic.
+You provide DETAILED, THOROUGH trading analysis with clear structure. Your analysis should
+read like a professional trading report — covering market structure, key levels, technical
+confirmations, and risk management in depth.
+
+When suggesting trades, use STRUCTURED SECTIONS with clear headers and thorough reasoning.
+Always base levels on real price data. Explain WHY each level matters — don't just list numbers.
 
 When generating PineScript code, use v6 syntax with alertcondition() calls.
 Format alert messages as JSON: {"action":"LONG","ticker":"{{ticker}}","price":"{{close}}","tp":"<TP>","sl":"<SL>"}
@@ -264,34 +267,55 @@ async def suggest_trade(
         )
 
     prompt += (
-        f"FORMAT RULES — this is sent to Telegram, so keep it SHORT and clean:\n"
-        f"- MAX 15 lines of text (excluding the JSON block)\n"
-        f"- Do NOT use markdown tables\n"
-        f"- Do NOT use headers (#)\n"
-        f"- Use this exact compact format:\n\n"
-        f"DIRECTION: LONG/SHORT (confidence: high/medium/low)\n"
-        f"Bias: 1-sentence market structure summary\n\n"
-        f"Entry: price\n"
-        f"SL: price\n"
-        f"TP1: price\n"
-        f"TP2: price\n"
-        f"TP3: price\n"
-        f"RRR: X:1\n\n"
-        f"Why: 1-2 sentences max on key confluences\n"
-        f"Session note: 1 sentence on current session impact\n\n"
-        f"CRITICAL: At the very end, include a JSON block with exact trade levels:\n"
+        f"Format your analysis using these EXACT sections with headers. Be detailed and thorough:\n\n"
+        f"📊 {asset} {timeframe} Analysis\n\n"
+        f"📈 Market Structure Assessment\n"
+        f"- Current trend direction and strength\n"
+        f"- Key support levels (at least 2-3, with why they matter)\n"
+        f"- Key resistance levels (at least 2-3, with why they matter)\n"
+        f"- Recent price action context (what happened in last few candles)\n\n"
+        f"🎯 Trade Recommendation\n"
+        f"- Direction: LONG or SHORT\n"
+        f"- Confidence: percentage (e.g., 72%)\n"
+        f"- Reasoning for this bias in 2-3 sentences\n\n"
+        f"💰 Entry Strategy\n"
+        f"- Entry zone (specific price or tight range)\n"
+        f"- Why this entry level is optimal (confluence factors)\n"
+        f"- Ideal entry trigger (e.g., bullish engulfing, break & retest)\n\n"
+        f"🎯 Take Profit Levels\n"
+        f"- TP1: price (R:R ratio, reasoning)\n"
+        f"- TP2: price (R:R ratio, reasoning)\n"
+        f"- TP3: price (R:R ratio, reasoning)\n"
+        f"- Suggested position sizing across TPs (e.g., 40%/30%/30%)\n\n"
+        f"🛑 Stop Loss\n"
+        f"- SL: price\n"
+        f"- Why this level (what structure it's behind)\n"
+        f"- Max risk percentage from entry\n\n"
+        f"📊 Risk-to-Reward Analysis\n"
+        f"- Overall R:R ratio\n"
+        f"- Risk amount vs potential reward breakdown\n\n"
+        f"✅ Technical Confirmation\n"
+        f"- Which indicators support this trade (RSI, MACD, EMAs, volume, etc.)\n"
+        f"- Entry triggers to watch for\n"
+        f"- Invalidation criteria — what kills this trade idea\n\n"
+        f"⏰ Session & Timing\n"
+        f"- How the current market session affects this setup\n"
+        f"- Best time window to enter\n\n"
+        f"CRITICAL: At the very end of your response, include a JSON block with the exact "
+        f"trade levels in this format:\n"
         f"```json\n"
         f'{{"direction": "LONG", "entry": 00000, "sl": 00000, '
         f'"tp1": 00000, "tp2": 00000, "tp3": 00000}}\n'
         f"```\n"
-        f"Use actual numbers (no commas, no $ signs). This JSON is hidden from the user."
+        f"Use actual numbers (no commas, no $ signs). This JSON block is hidden from the user "
+        f"and used to draw levels on a chart."
     )
     if extra:
         prompt += f"\nAdditional context: {extra}"
 
     response = client.messages.create(
         model=config.CLAUDE_MODEL,
-        max_tokens=1024,
+        max_tokens=4096,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
     )
