@@ -62,14 +62,17 @@ async def _fetch_market_data(symbol: str, timeframe: str = "4h") -> str:
 
 SYSTEM_PROMPT = """You are an expert quantitative trading analyst and PineScript v6 developer.
 
-You provide DETAILED, THOROUGH trading analysis with clear structure. Your analysis should
-read like a professional trading report — covering market structure, key levels, technical
-confirmations, and risk management in depth.
+You provide CONCISE, actionable trading analysis. Keep it short and to the point — no filler,
+no repetition. Every sentence should add value.
 
-When suggesting trades, use STRUCTURED SECTIONS with clear headers and thorough reasoning.
-Always base levels on real price data. Explain WHY each level matters — don't just list numbers.
+FORMATTING RULES (critical — output is displayed in Telegram):
+- NEVER use markdown tables (| col | col | syntax) — Telegram cannot render them
+- Use bullet points (- ) and bold (**text**) for structure
+- Keep total output under 2000 characters for trade analysis
+- No PineScript code in trade analysis responses — only when explicitly asked for code
+- No long explanations — be direct and actionable
 
-When generating PineScript code, use v6 syntax with alertcondition() calls.
+When generating PineScript code (only when asked), use v6 syntax with alertcondition() calls.
 Format alert messages as JSON: {"action":"LONG","ticker":"{{ticker}}","price":"{{close}}","tp":"<TP>","sl":"<SL>"}
 """
 
@@ -77,6 +80,7 @@ Format alert messages as JSON: {"action":"LONG","ticker":"{{ticker}}","price":"{
 async def _extract_symbol(text: str) -> str | None:
     """Try to extract a trading symbol from user text."""
     import re
+    # Match common patterns like BTCUSDT, BTC/USDT, ETH-USDT
     m = re.search(r"\b([A-Z]{2,10}(?:[/-]?USDT?|BUSD))\b", text.upper())
     if m:
         return m.group(1).replace("/", "").replace("-", "")
@@ -85,6 +89,7 @@ async def _extract_symbol(text: str) -> str | None:
 
 async def analyze(prompt: str, context: str = "") -> str:
     """Send a trading/strategy prompt to Claude and return the analysis."""
+    # Try to fetch live data if a symbol is mentioned
     symbol = await _extract_symbol(prompt)
     market_info = ""
     if symbol:
@@ -168,6 +173,7 @@ def _build_learning_context(asset: str, timeframe: str) -> str:
     """Build a context block from historical signal performance for Claude."""
     parts = []
 
+    # 1. Recent signals for this exact asset+timeframe
     recent = signal_db.get_recent_signals_for_learning(asset, timeframe, limit=10)
     if recent:
         parts.append(f"\n--- SELF-LEARNING: PAST SIGNAL PERFORMANCE ({asset} {timeframe}) ---")
@@ -178,6 +184,7 @@ def _build_learning_context(asset: str, timeframe: str) -> str:
 
         parts.append(f"Track record: {wins}W / {losses}L out of {total} signals ({win_rate:.0f}% win rate)")
 
+        # Show each recent signal outcome
         for i, r in enumerate(recent[:5], 1):
             result_str = r["exit_reason"] or "open"
             pnl = r["pnl_percent"] or 0
@@ -190,6 +197,7 @@ def _build_learning_context(asset: str, timeframe: str) -> str:
                 f"Candles to exit: {r['candles_to_exit']}"
             )
 
+        # Common patterns
         if wins > 0 and losses > 0:
             win_sessions = [r["market_session"] for r in recent if r["tp1_hit"] and r["market_session"]]
             loss_sessions = [r["market_session"] for r in recent if r["sl_hit"] and not r["tp1_hit"] and r["market_session"]]
@@ -200,6 +208,7 @@ def _build_learning_context(asset: str, timeframe: str) -> str:
 
         parts.append("--- END PAST PERFORMANCE ---\n")
 
+    # 2. Overall performance summary
     perf = signal_db.get_performance_summary(asset=asset, days=30)
     if perf and perf.get("total_signals") and perf["total_signals"] > 0:
         parts.append(f"\n--- OVERALL 30-DAY STATS ({asset}) ---")
@@ -212,6 +221,7 @@ def _build_learning_context(asset: str, timeframe: str) -> str:
         parts.append(f"Avg candles to resolution: {perf['avg_candles_to_exit']:.1f}")
         parts.append("--- END STATS ---\n")
 
+    # 3. Session-based performance
     session_perf = signal_db.get_session_performance(days=30)
     if session_perf:
         parts.append("\n--- SESSION PERFORMANCE (all assets, 30 days) ---")
@@ -233,6 +243,7 @@ async def suggest_trade(
     interval = TIMEFRAME_MAP.get(timeframe.upper(), timeframe.lower())
     market_data = await _fetch_market_data(asset, interval)
 
+    # Build session + learning context
     session_info = market_sessions.get_current_sessions()
     session_context = market_sessions.format_session_context(session_info)
     learning_context = _build_learning_context(asset, timeframe)
@@ -244,6 +255,7 @@ async def suggest_trade(
         f"IMPORTANT: All entry, TP, and SL levels MUST be based on the current price above.\n\n"
     )
 
+    # Inject session awareness
     prompt += (
         f"--- CURRENT MARKET SESSION ---\n"
         f"{session_context}\n"
@@ -255,6 +267,7 @@ async def suggest_trade(
         f"- CME weekly open (Sunday) has gap fill risk\n\n"
     )
 
+    # Inject self-learning data
     if learning_context:
         prompt += (
             f"{learning_context}\n"
@@ -267,48 +280,32 @@ async def suggest_trade(
         )
 
     prompt += (
-        f"Format your analysis using these EXACT sections with headers. Be detailed and thorough:\n\n"
-        f"📊 {asset} {timeframe} Analysis\n\n"
-        f"📈 Market Structure Assessment\n"
-        f"- Current trend direction and strength\n"
-        f"- Key support levels (at least 2-3, with why they matter)\n"
-        f"- Key resistance levels (at least 2-3, with why they matter)\n"
-        f"- Recent price action context (what happened in last few candles)\n\n"
-        f"🎯 Trade Recommendation\n"
-        f"- Direction: LONG or SHORT\n"
-        f"- Confidence: percentage (e.g., 72%)\n"
-        f"- Reasoning for this bias in 2-3 sentences\n\n"
-        f"💰 Entry Strategy\n"
-        f"- Entry zone (specific price or tight range)\n"
-        f"- Why this entry level is optimal (confluence factors)\n"
-        f"- Ideal entry trigger (e.g., bullish engulfing, break & retest)\n\n"
-        f"🎯 Take Profit Levels\n"
-        f"- TP1: price (R:R ratio, reasoning)\n"
-        f"- TP2: price (R:R ratio, reasoning)\n"
-        f"- TP3: price (R:R ratio, reasoning)\n"
-        f"- Suggested position sizing across TPs (e.g., 40%/30%/30%)\n\n"
-        f"🛑 Stop Loss\n"
-        f"- SL: price\n"
-        f"- Why this level (what structure it's behind)\n"
-        f"- Max risk percentage from entry\n\n"
-        f"📊 Risk-to-Reward Analysis\n"
-        f"- Overall R:R ratio\n"
-        f"- Risk amount vs potential reward breakdown\n\n"
-        f"✅ Technical Confirmation\n"
-        f"- Which indicators support this trade (RSI, MACD, EMAs, volume, etc.)\n"
-        f"- Entry triggers to watch for\n"
-        f"- Invalidation criteria — what kills this trade idea\n\n"
-        f"⏰ Session & Timing\n"
-        f"- How the current market session affects this setup\n"
-        f"- Best time window to enter\n\n"
-        f"CRITICAL: At the very end of your response, include a JSON block with the exact "
-        f"trade levels in this format:\n"
+        f"Keep your response CONCISE (under 2000 characters). Use this format exactly:\n\n"
+        f"📊 **{asset} {timeframe} Analysis**\n"
+        f"1-2 sentences on trend + market structure.\n\n"
+        f"🎯 **Trade Setup**\n"
+        f"- Direction: LONG/SHORT (confidence %)\n"
+        f"- Entry: price — brief reason\n"
+        f"- TP1: price (R:R)\n"
+        f"- TP2: price (R:R)\n"
+        f"- TP3: price (R:R)\n"
+        f"- SL: price — brief reason\n"
+        f"- R:R overall: X:1\n\n"
+        f"📈 **Key Levels**\n"
+        f"- Support: price, price\n"
+        f"- Resistance: price, price\n\n"
+        f"✅ **Confirmation**: 1-2 sentences on indicators/triggers\n\n"
+        f"⚠️ **Invalidation**: 1 sentence on what kills the trade\n\n"
+        f"RULES:\n"
+        f"- NO markdown tables. Use bullet points only.\n"
+        f"- NO PineScript code.\n"
+        f"- Be direct and brief — no filler or repetition.\n\n"
+        f"CRITICAL: At the very end, include a JSON block (hidden from user):\n"
         f"```json\n"
         f'{{"direction": "LONG", "entry": 00000, "sl": 00000, '
         f'"tp1": 00000, "tp2": 00000, "tp3": 00000}}\n'
         f"```\n"
-        f"Use actual numbers (no commas, no $ signs). This JSON block is hidden from the user "
-        f"and used to draw levels on a chart."
+        f"Use actual numbers, no commas or $ signs."
     )
     if extra:
         prompt += f"\nAdditional context: {extra}"
