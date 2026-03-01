@@ -61,41 +61,19 @@ async def _fetch_market_data(symbol: str, timeframe: str = "4h") -> str:
         return f"\n(Could not fetch live data for {symbol})\n"
 
 SYSTEM_PROMPT = """You are an expert quantitative trading analyst and PineScript v6 developer.
-You help traders by:
 
-1. ANALYZING assets and price action to recommend the best trading strategies
-2. GENERATING production-ready PineScript v6 code for TradingView
-3. RECOMMENDING trade direction (LONG/SHORT), entry zones, take-profit, and stop-loss levels
-4. EXPLAINING the reasoning behind each recommendation
+When suggesting trades, be CONCISE. This is sent to Telegram — no walls of text.
+Always include: direction (LONG/SHORT), entry, TP1/TP2/TP3, SL, and risk-to-reward.
+Base all levels on the real-time price data provided. Be specific, not generic.
 
-RULES:
-- Always use PineScript v6 syntax (indicator() not study(), strategy() with proper v6 args)
-- Include clear comments in generated code
-- When suggesting trades, ALWAYS include:
-  * Direction: LONG or SHORT
-  * Entry zone (price range)
-  * Take Profit (TP1, TP2, TP3 if applicable)
-  * Stop Loss (SL)
-  * Risk-to-reward ratio
-- When generating indicators, include alert conditions so the user can set up
-  TradingView alerts that fire webhooks to this Telegram bot
-- Be specific about timeframes and asset types
-- If the user mentions a specific asset/ticker, tailor your analysis to that asset
-- For webhook-compatible strategies, include alertcondition() calls with clear messages
-  formatted as JSON like: {"action": "LONG", "ticker": "BTCUSDT", "price": "{{close}}"}
-
-When generating a COMPLETE STRATEGY with alerts, structure the alertcondition messages as:
-  alertcondition(longCondition, "Long Signal", '{"action":"LONG","ticker":"{{ticker}}","price":"{{close}}","tp":"<TP>","sl":"<SL>"}')
-  alertcondition(shortCondition, "Short Signal", '{"action":"SHORT","ticker":"{{ticker}}","price":"{{close}}","tp":"<TP>","sl":"<SL>"}')
-
-This JSON format allows automated Telegram alerts when these conditions trigger on TradingView.
+When generating PineScript code, use v6 syntax with alertcondition() calls.
+Format alert messages as JSON: {"action":"LONG","ticker":"{{ticker}}","price":"{{close}}","tp":"<TP>","sl":"<SL>"}
 """
 
 
 async def _extract_symbol(text: str) -> str | None:
     """Try to extract a trading symbol from user text."""
     import re
-    # Match common patterns like BTCUSDT, BTC/USDT, ETH-USDT
     m = re.search(r"\b([A-Z]{2,10}(?:[/-]?USDT?|BUSD))\b", text.upper())
     if m:
         return m.group(1).replace("/", "").replace("-", "")
@@ -104,7 +82,6 @@ async def _extract_symbol(text: str) -> str | None:
 
 async def analyze(prompt: str, context: str = "") -> str:
     """Send a trading/strategy prompt to Claude and return the analysis."""
-    # Try to fetch live data if a symbol is mentioned
     symbol = await _extract_symbol(prompt)
     market_info = ""
     if symbol:
@@ -188,7 +165,6 @@ def _build_learning_context(asset: str, timeframe: str) -> str:
     """Build a context block from historical signal performance for Claude."""
     parts = []
 
-    # 1. Recent signals for this exact asset+timeframe
     recent = signal_db.get_recent_signals_for_learning(asset, timeframe, limit=10)
     if recent:
         parts.append(f"\n--- SELF-LEARNING: PAST SIGNAL PERFORMANCE ({asset} {timeframe}) ---")
@@ -199,7 +175,6 @@ def _build_learning_context(asset: str, timeframe: str) -> str:
 
         parts.append(f"Track record: {wins}W / {losses}L out of {total} signals ({win_rate:.0f}% win rate)")
 
-        # Show each recent signal outcome
         for i, r in enumerate(recent[:5], 1):
             result_str = r["exit_reason"] or "open"
             pnl = r["pnl_percent"] or 0
@@ -212,7 +187,6 @@ def _build_learning_context(asset: str, timeframe: str) -> str:
                 f"Candles to exit: {r['candles_to_exit']}"
             )
 
-        # Common patterns
         if wins > 0 and losses > 0:
             win_sessions = [r["market_session"] for r in recent if r["tp1_hit"] and r["market_session"]]
             loss_sessions = [r["market_session"] for r in recent if r["sl_hit"] and not r["tp1_hit"] and r["market_session"]]
@@ -223,7 +197,6 @@ def _build_learning_context(asset: str, timeframe: str) -> str:
 
         parts.append("--- END PAST PERFORMANCE ---\n")
 
-    # 2. Overall performance summary
     perf = signal_db.get_performance_summary(asset=asset, days=30)
     if perf and perf.get("total_signals") and perf["total_signals"] > 0:
         parts.append(f"\n--- OVERALL 30-DAY STATS ({asset}) ---")
@@ -236,7 +209,6 @@ def _build_learning_context(asset: str, timeframe: str) -> str:
         parts.append(f"Avg candles to resolution: {perf['avg_candles_to_exit']:.1f}")
         parts.append("--- END STATS ---\n")
 
-    # 3. Session-based performance
     session_perf = signal_db.get_session_performance(days=30)
     if session_perf:
         parts.append("\n--- SESSION PERFORMANCE (all assets, 30 days) ---")
@@ -258,7 +230,6 @@ async def suggest_trade(
     interval = TIMEFRAME_MAP.get(timeframe.upper(), timeframe.lower())
     market_data = await _fetch_market_data(asset, interval)
 
-    # Build session + learning context
     session_info = market_sessions.get_current_sessions()
     session_context = market_sessions.format_session_context(session_info)
     learning_context = _build_learning_context(asset, timeframe)
@@ -270,7 +241,6 @@ async def suggest_trade(
         f"IMPORTANT: All entry, TP, and SL levels MUST be based on the current price above.\n\n"
     )
 
-    # Inject session awareness
     prompt += (
         f"--- CURRENT MARKET SESSION ---\n"
         f"{session_context}\n"
@@ -282,7 +252,6 @@ async def suggest_trade(
         f"- CME weekly open (Sunday) has gap fill risk\n\n"
     )
 
-    # Inject self-learning data
     if learning_context:
         prompt += (
             f"{learning_context}\n"
@@ -295,29 +264,34 @@ async def suggest_trade(
         )
 
     prompt += (
-        f"Provide:\n"
-        f"1. Current market structure assessment (trend, key S/R levels)\n"
-        f"2. Recommended direction: LONG or SHORT (with confidence level)\n"
-        f"3. Entry zone\n"
-        f"4. Take Profit levels (TP1, TP2, TP3)\n"
-        f"5. Stop Loss\n"
-        f"6. Risk-to-Reward ratio\n"
-        f"7. Which indicators confirm this setup\n"
-        f"8. Session timing note — how does the current session affect this trade?\n\n"
-        f"CRITICAL: At the very end of your response, include a JSON block with the exact "
-        f"trade levels in this format:\n"
+        f"FORMAT RULES — this is sent to Telegram, so keep it SHORT and clean:\n"
+        f"- MAX 15 lines of text (excluding the JSON block)\n"
+        f"- Do NOT use markdown tables\n"
+        f"- Do NOT use headers (#)\n"
+        f"- Use this exact compact format:\n\n"
+        f"DIRECTION: LONG/SHORT (confidence: high/medium/low)\n"
+        f"Bias: 1-sentence market structure summary\n\n"
+        f"Entry: price\n"
+        f"SL: price\n"
+        f"TP1: price\n"
+        f"TP2: price\n"
+        f"TP3: price\n"
+        f"RRR: X:1\n\n"
+        f"Why: 1-2 sentences max on key confluences\n"
+        f"Session note: 1 sentence on current session impact\n\n"
+        f"CRITICAL: At the very end, include a JSON block with exact trade levels:\n"
         f"```json\n"
         f'{{"direction": "LONG", "entry": 00000, "sl": 00000, '
         f'"tp1": 00000, "tp2": 00000, "tp3": 00000}}\n'
         f"```\n"
-        f"Use actual numbers (no commas, no $ signs). This is used to draw levels on a chart."
+        f"Use actual numbers (no commas, no $ signs). This JSON is hidden from the user."
     )
     if extra:
         prompt += f"\nAdditional context: {extra}"
 
     response = client.messages.create(
         model=config.CLAUDE_MODEL,
-        max_tokens=4096,
+        max_tokens=1024,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
     )
