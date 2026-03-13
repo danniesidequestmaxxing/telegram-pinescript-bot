@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
-BINANCE_BASE = "https://api.binance.us"
+BINANCE_BASE = config.BINANCE_BASE_URL
 
 
 async def _fetch_market_data(symbol: str, timeframe: str = "4h") -> str:

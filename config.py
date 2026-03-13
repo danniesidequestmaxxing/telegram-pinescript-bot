@@ -11,3 +11,7 @@ WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0")
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8443"))
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "change_me")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
+
+# Binance API base URL — default to global Binance for deepest liquidity.
+# Override with BINANCE_BASE_URL env var if needed (e.g. for Binance US).
+BINANCE_BASE_URL = os.getenv("BINANCE_BASE_URL", "https://api.binance.com")

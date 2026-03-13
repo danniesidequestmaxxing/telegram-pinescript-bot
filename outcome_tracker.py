@@ -10,12 +10,13 @@ from datetime import datetime, timezone
 
 import httpx
 
+import config
 import signal_db
 from chart import TIMEFRAME_MAP, CANDLE_COUNTS
 
 logger = logging.getLogger(__name__)
 
-BINANCE_BASE = "https://api.binance.us"
+BINANCE_BASE = config.BINANCE_BASE_URL
 
 # How many candles to wait before marking a signal as "timeout"
 # (if neither TP nor SL is hit within this many candles, it's stale)
