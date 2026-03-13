@@ -2,13 +2,16 @@
 
 import json
 import logging
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).parent / "signals.db"
+# Use DB_PATH env var to point at a persistent volume (e.g. /data/signals.db on Railway).
+# Falls back to the project directory for local development.
+DB_PATH = Path(os.getenv("DB_PATH", Path(__file__).parent / "signals.db"))
 
 _conn: sqlite3.Connection | None = None
 
