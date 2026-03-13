@@ -13,9 +13,11 @@ import mplfinance as mpf
 import numpy as np
 import pandas as pd
 
+import config
+
 logger = logging.getLogger(__name__)
 
-BINANCE_BASE = "https://api.binance.us"
+BINANCE_BASE = config.BINANCE_BASE_URL
 
 # Map user-friendly timeframe strings to Binance interval codes
 TIMEFRAME_MAP = {
